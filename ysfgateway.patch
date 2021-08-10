@@ -1,0 +1,322 @@
+diff -Naur ORG/FCSNetwork.cpp PAT/FCSNetwork.cpp
+--- ORG/FCSNetwork.cpp	2021-08-10 15:50:52.662749425 +0200
++++ PAT/FCSNetwork.cpp	2021-01-23 22:28:38.000000000 +0100
+@@ -29,7 +29,7 @@
+ 
+ const unsigned int BUFFER_LENGTH = 200U;
+ 
+-CFCSNetwork::CFCSNetwork(unsigned short port, const std::string& callsign, unsigned int rxFrequency, unsigned int txFrequency, const std::string& locator, unsigned int id, bool debug) :
++CFCSNetwork::CFCSNetwork(unsigned short port, const std::string& callsign, unsigned int rxFrequency, unsigned int txFrequency, const std::string& locator, const std::string& name, unsigned int id, bool debug) :
+ m_socket(port),
+ m_debug(debug),
+ m_addr(),
+@@ -38,6 +38,7 @@
+ m_options(NULL),
+ m_opt(),
+ m_info(NULL),
++m_info_long(NULL),
+ m_reflector(),
+ m_print(),
+ m_buffer(1000U, "FCS Network Buffer"),
+@@ -46,9 +47,13 @@
+ m_resetTimer(1000U, 1U),
+ m_state(FCS_UNLINKED)
+ {
+-	m_info = new unsigned char[100U];
+-	::sprintf((char*)m_info, "%9u%9u%-6.6s%-12.12s%7u", rxFrequency, txFrequency, locator.c_str(), FCS_VERSION, id);
+-	::memset(m_info + 43U, ' ', 57U);
++	m_info_long = new unsigned char[100U];
++	::sprintf((char*)m_info_long, "%9u%9u%-6.6s%-12.12s%7u", rxFrequency, txFrequency, locator.c_str(), FCS_VERSION, id);
++	::memset(m_info_long + 43U, ' ', 57U);
++
++	m_info = new unsigned char[80U];
++	::sprintf((char*)m_info, "FCSIFCS99999%9u%9u%-6.6s%-20.20s%-12.12s%7u", rxFrequency, txFrequency, locator.c_str(), name.c_str(), FCS_VERSION, id);	// KBC 2020-09-07
++	::memset(m_info + 75U, ' ', 5U);
+ 
+ 	m_ping = new unsigned char[25U];
+ 	::memcpy(m_ping + 0U, "PING", 4U);
+@@ -65,6 +70,7 @@
+ CFCSNetwork::~CFCSNetwork()
+ {
+ 	delete[] m_info;
++	delete[] m_info_long;
+ 	delete[] m_ping;
+ 	delete[] m_options;
+ }
+@@ -198,14 +204,15 @@
+ 		if (m_state == FCS_LINKING)
+ 			LogMessage("Linked to %s", m_print.c_str());
+ 		m_state = FCS_LINKED;
+-		writeInfo();
++		writeInfo(m_print);
+ 		writeOptions(m_print);
+ 	}
+ 
+ 	if (length == 10 && m_state == FCS_LINKING) {
+ 		LogMessage("Linked to %s", m_print.c_str());
+ 		m_state = FCS_LINKED;
+-		writeInfo();
++		writeInfoLong(m_print);
++		writeInfo(m_print);
+ 		writeOptions(m_print);
+ 	}
+ 
+@@ -262,15 +269,28 @@
+ 	LogMessage("Closing FCS network connection");
+ }
+ 
+-void CFCSNetwork::writeInfo()
++void CFCSNetwork::writeInfo(const std::string& reflector)
+ {
+ 	if (m_state != FCS_LINKED)
+ 		return;
+ 
++	::memcpy(m_info + 4U, (reflector.substr(0,6)+reflector.substr(7,2)).c_str(), 8U);
++
+ 	if (m_debug)
+ 		CUtils::dump(1U, "FCS Network Data Sent", m_info, 100U);
+ 
+-	m_socket.write(m_info, 100U, m_addr, m_addrLen);
++	m_socket.write(m_info, 80U, m_addr, m_addrLen);
++}
++
++void CFCSNetwork::writeInfoLong(const std::string& reflector)
++{
++	if (m_state != FCS_LINKED)
++		return;
++
++	if (m_debug)
++		CUtils::dump(1U, "FCS Network Data Sent long", m_info_long, 100U);
++
++	m_socket.write(m_info_long, 100U, m_addr, m_addrLen);
+ }
+ 
+ void CFCSNetwork::writePing()
+@@ -292,7 +312,7 @@
+ 	if (m_opt.size() < 1)
+ 		return;
+ 
+-	::memset(m_options + 14U, 0x20U, 36U);
++	::memset(m_options + 4U, 0x20U, 46U);
+ 	::memcpy(m_options + 4U, (reflector.substr(0,6)+reflector.substr(7,2)).c_str(), 8U);
+ 	::memcpy(m_options + 12U, m_opt.c_str(), m_opt.size());
+ 
+diff -Naur ORG/FCSNetwork.h PAT/FCSNetwork.h
+--- ORG/FCSNetwork.h	2021-08-10 15:50:52.662749425 +0200
++++ PAT/FCSNetwork.h	2021-01-23 22:21:16.000000000 +0100
+@@ -36,7 +36,7 @@
+ 
+ class CFCSNetwork {
+ public:
+-	CFCSNetwork(unsigned short port, const std::string& callsign, unsigned int rxFrequency, unsigned int txFrequency, const std::string& locator, unsigned int id, bool debug);
++	CFCSNetwork(unsigned short port, const std::string& callsign, unsigned int rxFrequency, unsigned int txFrequency, const std::string& locator, const std::string& name, unsigned int id, bool debug);
+ 	~CFCSNetwork();
+ 
+ 	bool open();
+@@ -65,7 +65,8 @@
+ 	unsigned char*                 m_ping;
+ 	unsigned char*                 m_options;
+ 	std::string                    m_opt;
+-	unsigned char*                 m_info;
++	unsigned char*             	   m_info;
++	unsigned char*                 m_info_long;
+ 	std::string                    m_reflector;
+ 	std::string                    m_print;
+ 	CRingBuffer<unsigned char>     m_buffer;
+@@ -76,7 +77,8 @@
+ 	FCS_STATE                      m_state;
+ 
+ 	void writeOptions(const std::string& reflector);
+-	void writeInfo();
++	void writeInfo(const std::string& reflector);
++	void writeInfoLong(const std::string& reflector);
+ 	void writePing();
+ };
+ 
+diff -Naur ORG/YSFGateway.cpp PAT/YSFGateway.cpp
+--- ORG/YSFGateway.cpp	2021-08-10 15:50:52.682749454 +0200
++++ PAT/YSFGateway.cpp	2021-01-23 22:15:52.000000000 +0100
+@@ -199,7 +199,7 @@
+ 	}
+ 
+ 	std::string myAddress = m_conf.getMyAddress();
+-	unsigned short myPort = m_conf.getMyPort();
++	unsigned short myPort   = m_conf.getMyPort();
+ 	CYSFNetwork rptNetwork(myAddress, myPort, m_callsign, debug);
+ 
+ 	ret = rptNetwork.setDestination("MMDVM", rptAddr, rptAddrLen);
+@@ -211,8 +211,14 @@
+ 
+ 	bool ysfNetworkEnabled = m_conf.getYSFNetworkEnabled();
+ 	if (ysfNetworkEnabled) {
+-		unsigned short ysfPort = m_conf.getYSFNetworkPort();
+-		m_ysfNetwork = new CYSFNetwork(ysfPort, m_callsign, debug);
++		unsigned int txFrequency = m_conf.getTxFrequency();
++		unsigned int rxFrequency = m_conf.getRxFrequency();
++		std::string locator = calculateLocator();
++		std::string name = m_conf.getName();
++		unsigned int id = m_conf.getId();
++
++		unsigned short ysfPort = m_conf.getYSFNetworkPort();
++		m_ysfNetwork = new CYSFNetwork(ysfPort, m_callsign, rxFrequency, txFrequency, locator, name, id, debug);
+ 	}
+ 
+ 	m_fcsNetworkEnabled = m_conf.getFCSNetworkEnabled();
+@@ -220,11 +226,12 @@
+ 		unsigned int txFrequency = m_conf.getTxFrequency();
+ 		unsigned int rxFrequency = m_conf.getRxFrequency();
+ 		std::string locator = calculateLocator();
++		std::string name = m_conf.getName();	// KBC 2020-09-07
+ 		unsigned int id = m_conf.getId();
+ 
+-		unsigned short fcsPort = m_conf.getFCSNetworkPort();
++		unsigned short fcsPort = m_conf.getFCSNetworkPort();
+ 
+-		m_fcsNetwork = new CFCSNetwork(fcsPort, m_callsign, rxFrequency, txFrequency, locator, id, debug);
++		m_fcsNetwork = new CFCSNetwork(fcsPort, m_callsign, rxFrequency, txFrequency, locator, name, id, debug);
+ 		ret = m_fcsNetwork->open();
+ 		if (!ret) {
+ 			::LogError("Cannot open the FCS reflector network port");
+@@ -454,7 +461,7 @@
+ 		return;
+ 
+ 	std::string address = m_conf.getAPRSAddress();
+-	unsigned short port = m_conf.getAPRSPort();
++	unsigned short port   = m_conf.getAPRSPort();
+ 	std::string suffix  = m_conf.getAPRSSuffix();
+ 	bool debug          = m_conf.getDebug();
+ 
+@@ -503,7 +510,7 @@
+ 	m_wiresX->setInfo(name, txFrequency, rxFrequency);
+ 
+ 	std::string address = m_conf.getYSFNetworkParrotAddress();
+-	unsigned short port = m_conf.getYSFNetworkParrotPort();
++	unsigned short port = m_conf.getYSFNetworkParrotPort();
+ 	if (port > 0U)
+ 		m_wiresX->setParrot(address, port);
+ 
+diff -Naur ORG/YSFGateway.h PAT/YSFGateway.h
+--- ORG/YSFGateway.h	2021-08-10 15:50:52.682749454 +0200
++++ PAT/YSFGateway.h	2021-01-23 21:19:16.000000000 +0100
+@@ -61,6 +61,7 @@
+ 	std::string     m_current;
+ 	std::string     m_startup;
+ 	std::string     m_options;
++	std::string     m_info;
+ 	bool            m_exclude;
+ 	CTimer          m_inactivityTimer;
+ 	CTimer          m_lostTimer;
+diff -Naur ORG/YSFNetwork.cpp PAT/YSFNetwork.cpp
+--- ORG/YSFNetwork.cpp	2021-08-10 15:50:52.692749469 +0200
++++ PAT/YSFNetwork.cpp	2021-01-23 23:28:58.000000000 +0100
+@@ -25,9 +25,11 @@
+ #include <cassert>
+ #include <cstring>
+ 
++const char* YSF_VERSION = "YSFG-MMDVM";
++
+ const unsigned int BUFFER_LENGTH = 200U;
+ 
+-CYSFNetwork::CYSFNetwork(const std::string& address, unsigned short port, const std::string& callsign, bool debug) :
++CYSFNetwork::CYSFNetwork(const std::string& address, unsigned short port, const std::string& callsign, bool debug) :
+ m_socket(address, port),
+ m_debug(debug),
+ m_addr(),
+@@ -35,9 +37,10 @@
+ m_poll(NULL),
+ m_options(NULL),
+ m_opt(),
++m_info(NULL),
+ m_unlink(NULL),
+ m_buffer(1000U, "YSF Network Buffer"),
+-m_pollTimer(1000U, 5U),
++m_pollTimer(3000U, 5U),
+ m_name(),
+ m_linked(false)
+ {
+@@ -60,7 +63,7 @@
+ 	}
+ }
+ 
+-CYSFNetwork::CYSFNetwork(unsigned short port, const std::string& callsign, bool debug) :
++CYSFNetwork::CYSFNetwork(unsigned short port, const std::string& callsign, unsigned int rxFrequency, unsigned int txFrequency, const std::string& locator, const std::string& name, unsigned int id,  bool debug) :
+ m_socket(port),
+ m_debug(debug),
+ m_addr(),
+@@ -68,9 +71,10 @@
+ m_poll(NULL),
+ m_options(NULL),
+ m_opt(),
++m_info(NULL),
+ m_unlink(NULL),
+ m_buffer(1000U, "YSF Network Buffer"),
+-m_pollTimer(1000U, 5U),
++m_pollTimer(3000U, 5U),
+ m_name(),
+ m_linked(false)
+ {
+@@ -83,6 +87,9 @@
+ 	m_options = new unsigned char[50U];
+ 	::memcpy(m_options + 0U, "YSFO", 4U);
+ 
++	m_info = new unsigned char[80U];
++	::sprintf((char*)m_info, "YSFI%-10.10s%9u%9u%-6.6s%-20.20s%-12.12s%7u ", callsign.c_str(), rxFrequency, txFrequency, locator.c_str(), name.c_str(), YSF_VERSION, id);
++
+ 	std::string node = callsign;
+ 	node.resize(YSF_CALLSIGN_LENGTH, ' ');
+ 
+@@ -98,6 +105,7 @@
+ 	delete[] m_poll;
+ 	delete[] m_unlink;
+ 	delete[] m_options;
++	delete[] m_info;
+ }
+ 
+ bool CYSFNetwork::open()
+@@ -221,6 +229,14 @@
+ 	if (m_debug)
+ 		CUtils::dump(1U, "YSF Network Data Received", buffer, length);
+ 
++	if (::memcmp(buffer, "YSFPONLINE", 10U) == 0 && m_linked) {
++		if (m_info != NULL)
++			m_socket.write(m_info, 80U, m_addr, m_addrLen);
++
++		if (m_options != NULL)
++			m_socket.write(m_options, 50U, m_addr, m_addrLen);
++	}
++
+ 	// Throw away any options messages
+ 	if (::memcmp(buffer, "YSFO", 4U) == 0)
+ 		return;
+@@ -237,6 +253,9 @@
+ 
+ 		m_linked = true;
+ 
++		if (m_info != NULL)
++			m_socket.write(m_info, 80U, m_addr, m_addrLen);
++
+ 		if (!m_opt.empty())
+ 			m_socket.write(m_options, 50U, m_addr, m_addrLen);
+ 	}
+diff -Naur ORG/YSFNetwork.h PAT/YSFNetwork.h
+--- ORG/YSFNetwork.h	2021-08-10 15:50:52.692749469 +0200
++++ PAT/YSFNetwork.h	2021-01-23 22:16:56.000000000 +0100
+@@ -29,8 +29,8 @@
+ 
+ class CYSFNetwork {
+ public:
+-	CYSFNetwork(const std::string& address, unsigned short port, const std::string& callsign, bool debug);
+-	CYSFNetwork(unsigned short port, const std::string& callsign, bool debug);
++	CYSFNetwork(const std::string& address, unsigned short port, const std::string& callsign, bool debug);
++	CYSFNetwork(unsigned short port, const std::string& callsign, unsigned int rxFrequency, unsigned int txFrequency, const std::string& locator, const std::string& name, unsigned int id, bool debug);
+ 	~CYSFNetwork();
+ 
+ 	bool setDestination(const std::string& name, const sockaddr_storage& addr, unsigned int addrLen);
+@@ -54,6 +54,7 @@
+ 	unsigned char*             m_poll;
+ 	unsigned char*             m_options;
+ 	std::string                m_opt;
++	unsigned char*             m_info;
+ 	unsigned char*             m_unlink;
+ 	CRingBuffer<unsigned char> m_buffer;
+ 	CTimer                     m_pollTimer;
